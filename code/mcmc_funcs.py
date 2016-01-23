@@ -3,13 +3,33 @@ import matplotlib.pyplot as plt
 import scipy.optimize as op
 import emcee
 import corner
+import scipy.special.erf
 
 
 def lnlike(theta,  x,  y, yerr):
     m, b, lnf = theta
     model = m * x + b
-    inv_sigma2 = 1.0/(yerr**2 + model**2*np.exp(2*lnf))
-    return -0.5*(np.sum((y-model)**2*inv_sigma2 - np.log(inv_sigma2)))
+
+    npt_lc = np.share(y)[0]
+    err_jit2 = yerr**2 + (np.e**lnf)**2
+
+    loglc = (
+        - (npt_lc/2.)*np.log(2.*np.pi)
+        - 0.5 * np.sum(np.log(err_jit2))
+        - 0.5 * np.sum((model - y)**2 / err_jit2)
+        )
+
+    return loglc
+
+def lnlike_upperlimits(theta, x, y, yerr):
+    m, b, lnf = theta
+    model = m * x + b
+
+    npt_lc = np.share(y)[0]
+    loglc = -npt_lc * np.log(2) + np.sum(np.log(1 + scipy.special.erf((model - y) / (yerr * 2**0.5))))
+
+
+    return loglc
 
 
 def lnprior(theta):
@@ -24,6 +44,12 @@ def lnprob(theta, x, y, yerr):
     if not np.isfinite(lp):
         return -np.inf
     return lp + lnlike(theta, x, y, yerr)
+
+def lnprob_upperlimits(theta, x, y, yerr, xlimits, ylimits, ylimitserr):
+    lp = lnprior(theta)
+    if not np.isfinite(lp):
+        return -np.inf
+    return lp + lnlike(theta, x, y, yerr) + lnlike_upperlimits(theta, xlimits, ylimits, ylimitserr)
 
 
 def leastsq(x, y, yerr, print_output=False, plot_output=False):
@@ -110,6 +136,37 @@ def mcmc(x, y, yerr, print_output=False,
 
     return sampler
 
+def mcmc_upperlimits(x, y, yerr, xlimits, ylimits, ylimitserr, print_output=False,
+         ndim=3, nwalkers=300, nsamp=1500,
+         burnin=100):
+
+    # ignore upper limits for maxlike
+    m_ml, b_ml, lnf_ml = maxlike(x, y, yerr, print_output=False)
+    if not np.isfinite(lnprob([m_ml, b_ml, lnf_ml], x, y, yerr)):
+        m_ml, b_ml, lnf_ml = 0.0016, 9.25, np.log(0.0013)
+
+    pos = [np.array([m_ml, b_ml, lnf_ml]) +
+        1e-3*np.random.randn(ndim) for i in range(nwalkers)]
+
+    sampler = emcee.EnsembleSampler(
+        nwalkers, ndim, lnprob_upperlimits, args=(x, y, yerr, xlimits, ylimits, ylimitserr))
+    _ = sampler.run_mcmc(pos, 5000)
+
+    samples = sampler.chain[:, burnin:, :].reshape((-1, ndim))
+
+    samples[:, 2] = np.exp(samples[:, 2])
+    m_mcmc, b_mcmc, f_mcmc = map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]),
+                                 zip(*np.percentile(samples, [16, 50, 84],
+                                                    axis=0)))
+    if print_output:
+        print("""MCMC result:
+            m = {0[0]} +{0[1]} -{0[2]}
+            b = {1[0]} +{1[1]} -{1[2]}
+            f = {2[0]} +{2[1]} -{2[2]}
+            """.format(m_mcmc, b_mcmc, f_mcmc))
+
+    return sampler
+
 
 def plot_chains(sampler):
     fig, axes = plt.subplots(3, 1, sharex=True, figsize=(8, 15))
@@ -137,7 +194,10 @@ def plot_corner(sampler, burnin=100, ndim=3):
 
 def plot_samples(sampler, data, sampsize=30000, burnin=100, ndim=3,
         fill=True,):
-    x, y, yerr = data
+    if len(data) == 3:
+        x, y, yerr = data
+    elif len(data) == 6:
+        x, y, yerr, xlimits, ylimits, ylimitserr = data
     size = sampsize
     samples = sampler.chain[:, burnin:, :].reshape((-1, ndim))
     xval = np.arange(xmin, xmax, 1)
@@ -155,6 +215,8 @@ def plot_samples(sampler, data, sampsize=30000, burnin=100, ndim=3,
         for m, b, lnf in samples[np.random.randint(len(samples), size=100)]:
             ax1.plot(xval, m*xval+b, color="k", alpha=0.05)
     ax1.errorbar(x, y, yerr=yerr, fmt=".k")
+    if len(data) == 6:
+        ax1.scatter(xlimits, ylimits, fmt='vb')
     ax1.minorticks_on()
     ax1.grid()
     ax1.set_xlim(xmin, xmax)
