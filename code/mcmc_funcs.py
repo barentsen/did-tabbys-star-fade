@@ -10,7 +10,7 @@ def lnlike(theta,  x,  y, yerr):
     m, b, lnf = theta
     model = m * x + b
 
-    npt_lc = np.share(y)[0]
+    npt_lc = np.shape(y)[0]
     err_jit2 = yerr**2 + (np.e**lnf)**2
 
     loglc = (
@@ -25,7 +25,7 @@ def lnlike_upperlimits(theta, x, y, yerr):
     m, b, lnf = theta
     model = m * x + b
 
-    npt_lc = np.share(y)[0]
+    npt_lc = np.shape(y)[0]
     loglc = -npt_lc * np.log(2) + np.sum(np.log(1 + scipy.special.erf((model - y) / (yerr * 2**0.5))))
 
 
