@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import scipy.optimize as op
 import emcee
 import corner
-import scipy.special.erf
+import scipy.special
 
 
 def lnlike(theta,  x,  y, yerr):
