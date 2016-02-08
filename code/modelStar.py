@@ -3,6 +3,7 @@ import glob
 
 from scipy.stats import norm
 import scipy.optimize as op
+import scipy.special
 import matplotlib.pyplot as pl
 import numpy as np
 import pandas as pd
@@ -52,7 +53,8 @@ class OffsetModel(object, ):
         self.yerrLimit = yerrLimit
         log.info("yerr limit = {}".format(yerrLimit))
 
-        self.series = df['seriesId'][(~self.maskBad) & self.isNonDetection].values
+        self.series = df['seriesId'][(~self.maskBad) & ~self.isNonDetection].values
+        self.seriesLimits = df['seriesId'][(~self.maskBad) & self.isNonDetection].values
         self.nSeries = np.shape(np.unique(self.series))[0]
         self.uniqueSeries = np.unique(self.series)
 
@@ -75,6 +77,7 @@ class OffsetModel(object, ):
 
     @staticmethod
     def _lnlikeLimit(theta, obsdata):
+        x, y, yerr = obsdata
         m, b, lnfu = theta
         model = m * x + b
         err_jit2 = yerr**2 + (np.e**lnfu)**2
@@ -111,11 +114,11 @@ class OffsetModel(object, ):
         lnfu = theta[-1]
         for i, series in enumerate(self.uniqueSeries):
             mask = self.series == series
-            maskObs = mask
+            maskLimits = self.seriesLimits == series
             lnlike += self._lnlike([m, b[i], lnf], 
                 [self.x[mask], self.y[mask], self.yerr[mask]])
             lnlike += self._lnlikeLimit([m, b[i], lnfu], 
-                [self.xLimit[mask], self.yLimit[mask], self.yerrLimit])
+                [self.xLimit[maskLimits], self.yLimit[maskLimits], self.yerrLimit])
 
         return lp + lnlike
 
@@ -125,15 +128,15 @@ class OffsetModel(object, ):
         """Samples the slope and intercept using MCMC."""
         log.info("Calling EnsembleSampler.run_mcmc")
 
-        ndim = self.nSeries + 3
+        self.ndim = self.nSeries + 3
         pos = [np.r_[initialM, np.repeat(initialB, self.nSeries), initialF, initialFu]
-            + 1e-4*np.random.randn(ndim) for i in range(nwalkers)]
+            + 1e-4*np.random.randn(self.ndim) for i in range(nwalkers)]
     
-        self.sampler = emcee.EnsembleSampler(nwalkers, ndim, self.lnprob,
+        self.sampler = emcee.EnsembleSampler(nwalkers, self.ndim, self.lnprob,
                                     threads=threads)
 
         _ = self.sampler.run_mcmc(pos, nsamps)
-        samples = self.sampler.chain[:, burnin:, :].reshape((-1, ndim))
+        samples = self.sampler.chain[:, burnin:, :].reshape((-1, self.ndim))
         return samples
         
 
